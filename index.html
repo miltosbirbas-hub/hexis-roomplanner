@@ -226,6 +226,7 @@
             <option value="0.50">50 cm</option>
           </select>
         </div>
+        <button id="orthoBtn" style="background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">⊾ Καθετότητα: ΟΝ</button>
         <div id="planStep" style="color:var(--accent2);font-size:12px;text-align:center;font-weight:600">Σημάδεψε την 1η γωνία τοίχου</div>
         <div style="display:flex;gap:6px">
           <button class="planOpen" data-open="door" style="flex:1;background:var(--panel);border:1px solid var(--line)!important;color:var(--ink);font-size:11px;padding:8px 4px;border-radius:8px">🚪 Πόρτα</button>
@@ -281,7 +282,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v1.9 · floor-plan editor',
+  version:   'v2.2 · fluo walls',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -341,6 +342,8 @@ let mode='plan';
 // ---------- floor-plan editor state ----------
 // walls: array of {a:Vector3, b:Vector3, thick:number, openings:[{t0,t1,type}]}
 let walls=[];              // committed walls
+let orthoOn=true;          // καθετότητα τοίχων (snap στις 90°)
+const ORTHO_TOL=5;         // ±μοίρες για ενεργοποίηση snap/μηνύματος
 let planPts=[];            // pending corner picks for the current wall
 let pendingOpen=null;      // opening type currently being added (door|window|...)
 let openPts=[];            // the 2 picks (Vector3) for the opening being added
@@ -425,6 +428,18 @@ document.querySelectorAll('.modebar button').forEach(b=>{
 document.querySelectorAll('.planOpen').forEach(b=>{
   b.onclick=()=>startOpening(b.dataset.open);
 });
+
+const orthoBtn=document.getElementById('orthoBtn');
+if(orthoBtn){
+  orthoBtn.onclick=()=>{
+    orthoOn=!orthoOn;
+    orthoBtn.textContent = orthoOn?'⊾ Καθετότητα: ΟΝ':'⊾ Καθετότητα: OFF';
+    orthoBtn.style.background = orthoOn?'rgba(61,220,151,.14)':'rgba(143,164,196,.12)';
+    orthoBtn.style.borderColor = orthoOn?'var(--accent2)':'var(--line)';
+    orthoBtn.style.color = orthoOn?'var(--accent2)':'var(--muted)';
+    toast(orthoOn?'Καθετότητα ενεργή (snap 90°)':'Καθετότητα ανενεργή');
+  };
+}
 
 function resetPlan(){
   walls=[]; planPts=[]; pendingOpen=null; openPts=[];
@@ -631,22 +646,38 @@ function onFrame(t,frame){
   // 2) decide pointer position
   let target=null;
   let usedTransient=false;
+  let aboveFloorHit=false;   // true όταν χτυπήσαμε ψηλά (ντουλάπι/τοίχο) & ρίξαμε στο δάπεδο
+  // In plan/area/dist we are mapping the FLOOR. Keep every pick at floor height so a
+  // stray hit on a vertical wall can't push the point off and skew the side.
+  const FLOOR_LOCK = (mode==='plan'||mode==='area'||mode==='dist');
+  const WALL_TOL = 0.08;  // m: if a hit sits >8cm above floor it's treated as a wall
   if(touchActive && mode!=='height'){
     // (a) ACCURATE: real surface hit at the finger/aim point via transient hit-test
     if(transientSupported && transientHitSource){
       const tr=frame.getHitTestResultsForTransientInput(transientHitSource);
       if(tr && tr.length){
-        // find the input result that has hit results
         for(const item of tr){
           if(item.results && item.results.length){
             const pose=item.results[0].getPose(refSpace);
             if(pose){
-              target=new THREE.Vector3(
-                pose.transform.position.x,
-                pose.transform.position.y,
-                pose.transform.position.z);
-              usedTransient=true;
-              break;
+              const hx=pose.transform.position.x,
+                    hy=pose.transform.position.y,
+                    hz=pose.transform.position.z;
+              if(FLOOR_LOCK && floorReady && Math.abs(hy-floorY)>WALL_TOL){
+                // Hit landed on a vertical surface or an object (wall, cabinet,
+                // furniture) above the floor. Drop it STRAIGHT DOWN to floor level:
+                // keep the X,Z where you actually hit, just set Y to the floor.
+                // This gives the corner under the cabinet, not a point projected
+                // far past it along the camera ray.
+                target=new THREE.Vector3(hx, floorY, hz);
+                usedTransient=true;
+                aboveFloorHit=true;   // for status hint
+              }else{
+                // good floor hit → use it, but clamp Y to the floor for consistency
+                target=new THREE.Vector3(hx, (FLOOR_LOCK&&floorReady)?floorY:hy, hz);
+                usedTransient=true;
+              }
+              if(target) break;
             }
           }
         }
@@ -713,7 +744,8 @@ function onFrame(t,frame){
 
     if(!collecting){
       const acc = usedTransient ? ' ◆' : '';
-      if(touchActive) setStatus((spread<STABLE_TOL?'Σταθερό — άσε & πάτα «Σημείο»':'Κράτα ακίνητο το δάχτυλο…')+acc);
+      const drop = aboveFloorHit ? ' ↓δάπεδο' : '';
+      if(touchActive) setStatus((spread<STABLE_TOL?'Σταθερό — άσε & πάτα «Σημείο»':'Κράτα ακίνητο το δάχτυλο…')+acc+drop);
       else if(frozenPos) setStatus('Κλειδωμένο — πάτα «Σημείο» ή σύρε ξανά');
       else setStatus(floorReady?'Σύρε το δάχτυλο στο σημείο':'Σύρε στο σημείο που θες');
     }
@@ -871,17 +903,76 @@ function handlePlanPick(p){
     return;
   }
   // Otherwise we're drawing walls: corner by corner
-  planPts.push(p.clone());
-  addMarker(p);
+  let pp=p.clone();
+  // ORTHO SNAP: if enabled and we have a previous wall direction, and the new
+  // segment is within ±ORTHO_TOL of perpendicular/parallel, rotate it onto the
+  // exact 90°/180° while KEEPING the measured length (distances stay correct).
+  if(orthoOn && planPts.length>=1){
+    const a=planPts[planPts.length-1];           // start of the new segment
+    let prevDir=null;
+    if(planPts.length>=2){
+      prevDir=new THREE.Vector3().subVectors(planPts[planPts.length-1],planPts[planPts.length-2]);
+      prevDir.y=0; if(prevDir.lengthSq()>1e-6) prevDir.normalize(); else prevDir=null;
+    }
+    if(prevDir){
+      const snapped=snapOrtho(a,pp,prevDir);
+      if(snapped){ pp=snapped.point; if(snapped.adjusted) toast('Καθετότητα ✓ (snap 90°)'); }
+    }
+  }
+  planPts.push(pp.clone());
+  addMarker(pp);
   if(planPts.length>=2){
     // make a wall from the last two corners
     const a=planPts[planPts.length-2], b=planPts[planPts.length-1];
     walls.push({a:a.clone(), b:b.clone(), thick:wallThickness(), openings:[]});
+    // check the angle the new wall makes with the previous one and warn if odd
+    if(walls.length>=2){
+      const ang=wallAngleDeg(walls[walls.length-2], walls[walls.length-1]);
+      if(ang!=null){
+        const near90=Math.abs(ang-90)<=ORTHO_TOL || Math.abs(ang-270)<=ORTHO_TOL;
+        const near180=Math.abs(ang-180)<=ORTHO_TOL || ang<=ORTHO_TOL || Math.abs(ang-360)<=ORTHO_TOL;
+        if(!near90 && !near180){
+          toast('⚠ Γωνία '+ang.toFixed(0)+'° — όχι κάθετη. Έλεγξε ή χρησιμοποίησε Undo');
+        }
+      }
+    }
     setPlanStep('Τοίχος '+walls.length+' ✓ · σημάδεψε επόμενη γωνία ή πρόσθεσε άνοιγμα');
   }else{
     setPlanStep('Σημάδεψε τη 2η γωνία (τέλος 1ου τοίχου)');
   }
   redrawPlan();
+}
+
+// Snap segment a→p so it is perpendicular/parallel to prevDir if within tolerance.
+// Keeps the measured length; only rotates direction. Returns {point, adjusted} or null.
+function snapOrtho(a,p,prevDir){
+  const v=new THREE.Vector3().subVectors(p,a); v.y=0;
+  const len=v.length();
+  if(len<1e-4) return null;
+  const dir=v.clone().normalize();
+  // candidate ortho directions: along prevDir, opposite, and the two perpendiculars
+  const perp=new THREE.Vector3(-prevDir.z,0,prevDir.x);
+  const cands=[prevDir.clone(), prevDir.clone().multiplyScalar(-1), perp.clone(), perp.clone().multiplyScalar(-1)];
+  let best=null,bestDot=-1;
+  cands.forEach(c=>{ const d=dir.dot(c); if(d>bestDot){bestDot=d;best=c;} });
+  const angOff=Math.acos(Math.max(-1,Math.min(1,bestDot)))*180/Math.PI;
+  if(angOff<=ORTHO_TOL){
+    // rotate onto the ortho direction, keep length
+    const np=new THREE.Vector3().copy(a).addScaledVector(best,len);
+    np.y=a.y;
+    return {point:np, adjusted:angOff>0.5};
+  }
+  return {point:p, adjusted:false};
+}
+
+// angle (deg, 0..360) between two consecutive walls at their shared corner
+function wallAngleDeg(w1,w2){
+  const d1=new THREE.Vector3().subVectors(w1.a,w1.b); d1.y=0;  // pointing back along w1
+  const d2=new THREE.Vector3().subVectors(w2.b,w2.a); d2.y=0;  // forward along w2
+  if(d1.lengthSq()<1e-6||d2.lengthSq()<1e-6) return null;
+  d1.normalize(); d2.normalize();
+  let a=Math.acos(Math.max(-1,Math.min(1,d1.dot(d2))))*180/Math.PI;
+  return a;
 }
 
 // Begin adding an opening of a given type
@@ -939,7 +1030,7 @@ function redrawPlan(){
   planObjs.forEach(o=>scene.remove(o)); planObjs=[];
   const y = walls.length? walls[0].a.y+0.002 : 0;
   walls.forEach(w=>{
-    const col = 0xE8772E;
+    const col = 0x39FF14;   // fluo green walls
     // wall centre line
     addPlanLine(w.a,w.b,col,2);
     // wall thickness: offset edges
@@ -950,8 +1041,8 @@ function redrawPlan(){
     addPlanLine(a1,b1,col,1); addPlanLine(a2,b2,col,1);
     // openings drawn in distinct colours along the wall
     w.openings.forEach(op=>{
-      const oc = op.type==='door'?0x3ddc97 : op.type==='window'?0x49b6ff
-               : op.type==='balcony'?0xffd24a : 0xff7a52;
+      const oc = op.type==='door'?0xE8772E : op.type==='window'?0x49b6ff
+               : op.type==='balcony'?0xffd24a : 0xff4d4d;
       const pa=lerpV(w.a,w.b,op.t0), pb=lerpV(w.a,w.b,op.t1);
       addPlanLine(pa,pb,oc,4);
     });
@@ -1309,12 +1400,12 @@ function planDXFpreview(wallsL){
   const s=Math.min((W-2*pad)/w,(H-2*pad)/h);
   const tx=x=>pad+(x-minX)*s;
   const ty=y=>H-pad-(y-minY)*s;
-  const oc={door:'#3ddc97',window:'#49b6ff',balcony:'#ffd24a',gap:'#ff7a52'};
+  const oc={door:'#E8772E',window:'#49b6ff',balcony:'#ffd24a',gap:'#ff4d4d'};
   let g='';
   wallsL.forEach(wl=>{
     const x1=tx(wl.a.x),y1=ty(wl.a.y),x2=tx(wl.b.x),y2=ty(wl.b.y);
     const sw=Math.max(2,Math.min(10,wl.thick*s));
-    g+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#cdd7ea" stroke-width="${sw.toFixed(1)}" stroke-linecap="round"/>`;
+    g+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#39FF14" stroke-width="${sw.toFixed(1)}" stroke-linecap="round"/>`;
     g+=`<text x="${((x1+x2)/2).toFixed(1)}" y="${((y1+y2)/2-6).toFixed(1)}" fill="#E8772E" font-size="10" font-family="monospace" text-anchor="middle">${wl.length.toFixed(2)}</text>`;
     wl.openings.forEach(op=>{
       g+=`<line x1="${tx(op.x0).toFixed(1)}" y1="${ty(op.y0).toFixed(1)}" x2="${tx(op.x1).toFixed(1)}" y2="${ty(op.y1).toFixed(1)}" stroke="${oc[op.type]||'#fff'}" stroke-width="${(sw+2).toFixed(1)}" stroke-linecap="butt"/>`;
