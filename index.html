@@ -233,6 +233,18 @@
             <option value="0.50">50 cm</option>
           </select>
         </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="color:var(--muted);font-size:12px;white-space:nowrap">Ύψος τοίχων</label>
+          <select id="wallHeightSel" style="flex:1;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px">
+            <option value="2.40">2.40 m</option>
+            <option value="2.60">2.60 m</option>
+            <option value="2.80" selected>2.80 m</option>
+            <option value="3.00">3.00 m</option>
+            <option value="3.20">3.20 m</option>
+            <option value="3.50">3.50 m</option>
+            <option value="4.00">4.00 m</option>
+          </select>
+        </div>
         <div style="display:flex;gap:6px">
           <button id="orthoBtn" style="flex:1;background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">⊾ Καθετότητα: ΟΝ</button>
           <button id="autoLockBtn" style="flex:1;background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">🔒 Auto-lock: ΟΝ</button>
@@ -262,13 +274,20 @@
     <div class="sub" id="sheetSub"></div>
     <div id="metrics"></div>
     <div id="planWrap" style="display:none;margin-top:20px">
-      <div style="font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">Κάτοψη (τοπικό σύστημα · μέτρα)</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase">Προβολή</span>
+        <div id="viewToggle" style="display:flex;gap:4px">
+          <button id="view2d" class="vbtn on" style="font-size:12px;padding:5px 12px;border-radius:7px;background:var(--accent);color:#06241a;border:none;font-weight:700">2D</button>
+          <button id="view3d" class="vbtn" style="font-size:12px;padding:5px 12px;border-radius:7px;background:var(--panel);color:var(--muted);border:1px solid var(--line)">3D</button>
+        </div>
+      </div>
       <div id="planBox" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px"></div>
     </div>
     <div id="segList"></div>
     <div class="sheetbtns">
       <button id="importBtn" style="display:none;background:var(--accent2);color:#06241a;font-weight:700">✓ Εισαγωγή στην καταγραφή</button>
-      <button id="dxfBtn" style="display:none;background:var(--accent);color:#1a1206">Εξαγωγή DXF (κάτοψη)</button>
+      <button id="dxfBtn" style="display:none;background:var(--accent);color:#1a1206">Εξαγωγή DXF (κάτοψη 2D)</button>
+      <button id="dxf3dBtn" style="display:none;background:var(--accent2);color:#06241a">Εξαγωγή DXF 3D (3DFACE)</button>
       <button id="copyBtn">Αντιγραφή report</button>
       <button id="againBtn">Νέα μέτρηση</button>
     </div>
@@ -293,7 +312,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v3.2 · auto-lock',
+  version:   'v4.0 · 3D model',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -356,6 +375,8 @@ let walls=[];              // committed walls
 let orthoOn=true;          // καθετότητα τοίχων (snap στις 90°)
 const ORTHO_TOL=5;         // ±μοίρες για ενεργοποίηση snap/μηνύματος
 let lastPickQuality=0;     // tracking spread (m) τη στιγμή της τελευταίας τοποθέτησης
+let wallHeight=2.80;       // κοινό ύψος τοίχων (m) — ζητείται μία φορά
+let wallHeightAsked=false; // ρωτήθηκε το ύψος;
 let planPts=[];            // pending corner picks for the current wall
 let pendingOpen=null;      // opening type currently being added (door|window|...)
 let openPts=[];            // the 2 picks (Vector3) for the opening being added
@@ -1070,11 +1091,41 @@ function commitOpening(){
   t0=Math.max(0,Math.min(1,t0)); t1=Math.max(0,Math.min(1,t1));
   if(t0>t1){ const tmp=t0; t0=t1; t1=tmp; }
   w.openings.push({t0,t1,type:pendingOpen});
+  const justAdded=w.openings[w.openings.length-1];
+  // measured width along the wall (for reference in the prompt)
+  const wallLen=w.a.distanceTo(w.b)*scaleFactor;
+  const measuredW=(wallLen*Math.abs(t1-t0));
   const names={door:'Πόρτα',window:'Παράθυρο',balcony:'Μπαλκονόπορτα',gap:'Κενό'};
+  // ask the opening's vertical dimensions (width is measured from the wall picks)
+  askOpeningDims(justAdded, names[pendingOpen]||'Άνοιγμα', measuredW);
   toast(names[pendingOpen]+' προστέθηκε στον τοίχο '+(best+1));
   pendingOpen=null; openPts=[];
   setPlanStep('Άνοιγμα ✓ · συνέχισε τοίχο ή πρόσθεσε άλλο');
   redrawPlan();
+}
+
+// Ask width / height / sill (ποδιά) for an opening. Πρέκι = sill+height (υπολογίζεται).
+// Sensible defaults per type so you can just accept.
+function askOpeningDims(op, label, measuredW){
+  const def = {
+    'Πόρτα':        {w:0.90, h:2.20, sill:0.00},
+    'Παράθυρο':     {w:1.20, h:1.20, sill:0.90},
+    'Μπαλκονόπορτα':{w:1.40, h:2.20, sill:0.00},
+    'Κενό':         {w:1.00, h:2.20, sill:0.00}
+  }[label] || {w:1.00,h:2.10,sill:0.00};
+  const wv=measuredW>0.05? measuredW : def.w;   // use measured width if reasonable
+  const wAns=prompt(label+' — ΠΛΑΤΟΣ (m)\n(μετρημένο: '+wv.toFixed(2)+')', wv.toFixed(2));
+  if(wAns!=null){ const v=parseFloat(String(wAns).replace(',','.')); if(isFinite(v)&&v>0) op.openW=v; }
+  const hAns=prompt(label+' — ΥΨΟΣ (m)', def.h.toFixed(2));
+  if(hAns!=null){ const v=parseFloat(String(hAns).replace(',','.')); if(isFinite(v)&&v>0) op.openH=v; }
+  const sAns=prompt(label+' — ΠΟΔΙΑ / sill, ύψος από δάπεδο (m)\n(πόρτα/μπαλκονόπορτα = 0)', def.sill.toFixed(2));
+  if(sAns!=null){ const v=parseFloat(String(sAns).replace(',','.')); if(isFinite(v)&&v>=0) op.openSill=v; }
+  // fill any missing with defaults
+  if(op.openW==null) op.openW=wv;
+  if(op.openH==null) op.openH=def.h;
+  if(op.openSill==null) op.openSill=def.sill;
+  // πρέκι (lintel height from floor) = sill + height
+  op.lintel = op.openSill + op.openH;
 }
 
 // distance from point to segment (3D, but we mostly care about XZ)
@@ -1274,13 +1325,14 @@ function finish(){
   if(mode==='height') return; // handled separately
   if(mode==='plan'){
     if(walls.length<1){ toast('Φτιάξε τουλάχιστον έναν τοίχο'); return; }
+    const hsel=$('#wallHeightSel'); if(hsel) wallHeight=parseFloat(hsel.value)||2.80;
     if(!calibrated){
       const go=confirm('⚠ Δεν έχει γίνει ΒΑΘΜΟΝΟΜΗΣΗ.\n\nΧωρίς βαθμονόμηση σε γνωστή απόσταση, τα μήκη μπορεί να έχουν σφάλμα κλίμακας.\n\nΘες να συνεχίσεις χωρίς βαθμονόμηση;\n\n(OK = συνέχεια · Άκυρο = πήγαινε να βαθμονομήσεις)');
       if(!go) return;
     }
     const wl=planToLocal();
     const clo=closureError(wl);
-    result={type:'plan', walls:wl, wallCount:walls.length, closure:clo, calibrated};
+    result={type:'plan', walls:wl, wallCount:walls.length, closure:clo, calibrated, height:wallHeight};
     showSheet();
     return;
   }
@@ -1382,7 +1434,9 @@ function planToLocal(){
         // opening endpoints in local coords (interpolate along the wall)
         x0:a.x+(b.x-a.x)*op.t0, y0:a.y+(b.y-a.y)*op.t0,
         x1:a.x+(b.x-a.x)*op.t1, y1:a.y+(b.y-a.y)*op.t1,
-        width:len*Math.abs(op.t1-op.t0)
+        width:len*Math.abs(op.t1-op.t0),
+        openW:op.openW||null, openH:op.openH||null,
+        openSill:(op.openSill!=null?op.openSill:null), lintel:op.lintel||null
       }))
     };
   });
@@ -1461,6 +1515,65 @@ function buildPlanDXF(plan){
   return L.join('\r\n');
 }
 
+// 3D DXF using 3DFACE entities: each wall becomes a box (two faces per side split
+// around openings) extruded to `height`. Openings leave holes (sill..lintel).
+function buildPlan3DDXF(plan, height){
+  const Hh=height||2.80;
+  const L=[]; const p=(c,v)=>{L.push(c);L.push(v);};
+  p(0,'SECTION');p(2,'HEADER');p(9,'$INSUNITS');p(70,6);p(0,'ENDSEC');
+  p(0,'SECTION');p(2,'TABLES');p(0,'TABLE');p(2,'LAYER');p(70,6);
+  const layer=(n,c)=>{p(0,'LAYER');p(2,n);p(70,0);p(62,c);p(6,'CONTINUOUS');};
+  layer('TOICHOI_3D',7); layer('PORTES_3D',3); layer('PARATHYRA_3D',5);
+  layer('MPALKONOPORTES_3D',2); layer('KENA_3D',1);
+  p(0,'ENDTAB');p(0,'ENDSEC');
+  p(0,'SECTION');p(2,'ENTITIES');
+  // 3DFACE: 4 corners (10/20/30 .. 13/23/33)
+  const face=(P1,P2,P3,P4,lay)=>{
+    p(0,'3DFACE');p(8,lay);
+    p(10,P1[0].toFixed(4));p(20,P1[1].toFixed(4));p(30,P1[2].toFixed(4));
+    p(11,P2[0].toFixed(4));p(21,P2[1].toFixed(4));p(31,P2[2].toFixed(4));
+    p(12,P3[0].toFixed(4));p(22,P3[1].toFixed(4));p(32,P3[2].toFixed(4));
+    p(13,P4[0].toFixed(4));p(23,P4[1].toFixed(4));p(33,P4[2].toFixed(4));
+  };
+  const openLay={door:'PORTES_3D',window:'PARATHYRA_3D',balcony:'MPALKONOPORTES_3D',gap:'KENA_3D'};
+
+  plan.forEach(w=>{
+    const ax=w.a.x, ay=w.a.y, bx=w.b.x, by=w.b.y;
+    const len=Math.hypot(bx-ax,by-ay)||1;
+    const ux=(bx-ax)/len, uy=(by-ay)/len;       // along wall
+    // build sorted opening intervals (by distance along wall) with their z-range
+    const ivs=(w.openings||[]).map(op=>{
+      const d0=Math.hypot(op.x0-ax,op.y0-ay), d1=Math.hypot(op.x1-ax,op.y1-ay);
+      const lo=Math.min(d0,d1), hi=Math.max(d0,d1);
+      const sill=op.openSill!=null?op.openSill:0;
+      const lin=op.lintel!=null?op.lintel:(sill+(op.openH||2.1));
+      return {lo,hi,sill,lin,type:op.type};
+    }).sort((a,b)=>a.lo-b.lo);
+    // a point on the wall centreline at distance d, height z
+    const P=(d,z)=>[ax+ux*d, ay+uy*d, z];
+    // walk along the wall: solid full-height panels between openings, and
+    // sill/lintel panels above & below each opening
+    let cur=0;
+    ivs.forEach(iv=>{
+      if(iv.lo>cur){ // full-height solid panel before this opening
+        face(P(cur,0),P(iv.lo,0),P(iv.lo,Hh),P(cur,Hh),'TOICHOI_3D');
+      }
+      // panel under the opening (0..sill)
+      if(iv.sill>0) face(P(iv.lo,0),P(iv.hi,0),P(iv.hi,iv.sill),P(iv.lo,iv.sill),'TOICHOI_3D');
+      // panel over the opening (lintel..Hh)
+      if(iv.lin<Hh) face(P(iv.lo,iv.lin),P(iv.hi,iv.lin),P(iv.hi,Hh),P(iv.lo,Hh),'TOICHOI_3D');
+      // the opening face itself (sill..lintel) on its own layer (as a marker pane)
+      face(P(iv.lo,iv.sill),P(iv.hi,iv.sill),P(iv.hi,iv.lin),P(iv.lo,iv.lin), openLay[iv.type]||'KENA_3D');
+      cur=iv.hi;
+    });
+    if(cur<len){ // remaining full-height solid panel after last opening
+      face(P(cur,0),P(len,0),P(len,Hh),P(cur,Hh),'TOICHOI_3D');
+    }
+  });
+  p(0,'ENDSEC');p(0,'EOF');
+  return L.join('\r\n');
+}
+
 function showSheet(){
   overlayEl.style.display='none';
   sheetEl.style.display='flex';
@@ -1503,11 +1616,15 @@ function showSheet(){
           return `<div class="seg"><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${qc};margin-right:6px" title="${qt}"></span>Τοίχος ${i+1}${op}</span>
             <b class="wall-edit" data-wall="${i}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px">${w.length.toFixed(2)} m ✎</b></div>`;
         }).join('');
-    $('#planBox').innerHTML=planDXFpreview(result.walls);
+    renderPlanView();
     $('#planWrap').style.display='block';
     $('#dxfBtn').style.display='block';
-    // bind per-wall manual length correction
+    $('#dxf3dBtn').style.display='block';
+    // bind 2D/3D toggle
     setTimeout(()=>{
+      const v2=$('#view2d'), v3=$('#view3d');
+      if(v2) v2.onclick=()=>{ planViewMode='2d'; setViewBtns(); renderPlanView(); };
+      if(v3) v3.onclick=()=>{ planViewMode='3d'; setViewBtns(); renderPlanView(); };
       document.querySelectorAll('.wall-edit').forEach(b=>{
         b.onclick=()=>editWallLength(parseInt(b.dataset.wall,10));
       });
@@ -1523,9 +1640,11 @@ function showSheet(){
     $('#planBox').innerHTML=planSVG(result.plan,result.segs);
     $('#planWrap').style.display='block';
     $('#dxfBtn').style.display='block';
+    $('#dxf3dBtn').style.display='none';
   }else{
     $('#planWrap').style.display='none';
     $('#dxfBtn').style.display='none';
+    $('#dxf3dBtn').style.display='none';
     if(result.type==='dist'){
       $('#sheetTitle').textContent='Απόσταση';
       m.innerHTML=row('Μήκος',result.distance.toFixed(2),' m')
@@ -1539,6 +1658,69 @@ function showSheet(){
 }
 
 // ---------- plan preview (walls with thickness + openings) ----------
+// 3D isometric preview: walls extruded to wallHeight, openings cut as colored
+// panels at their sill..lintel height. Pure SVG isometric projection (no library).
+let planViewMode='2d';
+function renderPlanView(){
+  if(!result||result.type!=='plan') return;
+  const box=$('#planBox'); if(!box) return;
+  box.innerHTML = planViewMode==='3d'
+    ? plan3Dpreview(result.walls, result.height)
+    : planDXFpreview(result.walls);
+}
+function setViewBtns(){
+  const v2=$('#view2d'), v3=$('#view3d');
+  if(!v2||!v3) return;
+  const on=(b)=>{ b.style.background='var(--accent)'; b.style.color='#06241a'; b.style.border='none'; b.style.fontWeight='700'; };
+  const off=(b)=>{ b.style.background='var(--panel)'; b.style.color='var(--muted)'; b.style.border='1px solid var(--line)'; b.style.fontWeight='400'; };
+  if(planViewMode==='3d'){ on(v3); off(v2); } else { on(v2); off(v3); }
+}
+function plan3Dpreview(wallsL, height){
+  const W=340,H=280,pad=24;
+  const Hh=height||2.80;
+  // isometric projection: world (x,y,z) where y=plan-Y (depth), z=up
+  // iso: screenX = (x - y)*cos30 ; screenY = (x + y)*sin30 - z
+  const cos=Math.cos(Math.PI/6), sin=Math.sin(Math.PI/6);
+  const iso=(x,y,z)=>({X:(x-y)*cos, Y:(x+y)*sin - z});
+  // collect all projected points to fit the view
+  const pts=[];
+  wallsL.forEach(w=>{
+    [[w.a.x,w.a.y],[w.b.x,w.b.y]].forEach(([x,y])=>{
+      pts.push(iso(x,y,0)); pts.push(iso(x,y,Hh));
+    });
+  });
+  if(!pts.length) return '<div style="color:var(--muted);text-align:center;padding:20px">—</div>';
+  const minX=Math.min(...pts.map(p=>p.X)),maxX=Math.max(...pts.map(p=>p.X));
+  const minY=Math.min(...pts.map(p=>p.Y)),maxY=Math.max(...pts.map(p=>p.Y));
+  const sw=(maxX-minX)||1, sh=(maxY-minY)||1;
+  const sc=Math.min((W-2*pad)/sw,(H-2*pad)/sh);
+  const TX=p=>pad+(p.X-minX)*sc;
+  const TY=p=>pad+(p.Y-minY)*sc;
+  const oc={door:'#E8772E',window:'#49b6ff',balcony:'#ffd24a',gap:'#ff4d4d'};
+  // draw walls back-to-front (painter's): sort by midpoint depth (x+y)
+  const order=wallsL.map((w,i)=>({i,d:(w.a.x+w.a.y+w.b.x+w.b.y)})).sort((a,b)=>a.d-b.d);
+  let g='';
+  order.forEach(({i})=>{
+    const w=wallsL[i];
+    // wall quad (a-bottom, b-bottom, b-top, a-top)
+    const ab=iso(w.a.x,w.a.y,0), bb=iso(w.b.x,w.b.y,0),
+          bt=iso(w.b.x,w.b.y,Hh), at=iso(w.a.x,w.a.y,Hh);
+    const poly=[ab,bb,bt,at].map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
+    g+=`<polygon points="${poly}" fill="rgba(57,255,20,0.13)" stroke="#39FF14" stroke-width="1.6" stroke-linejoin="round"/>`;
+    // openings as colored panels at sill..lintel
+    (w.openings||[]).forEach(op=>{
+      const sill=op.openSill!=null?op.openSill:0;
+      const lin = op.lintel!=null?op.lintel:(sill+(op.openH||2.1));
+      // opening spans from its x0,y0 to x1,y1 along the wall
+      const o0b=iso(op.x0,op.y0,sill), o1b=iso(op.x1,op.y1,sill),
+            o1t=iso(op.x1,op.y1,lin),  o0t=iso(op.x0,op.y0,lin);
+      const opoly=[o0b,o1b,o1t,o0t].map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
+      g+=`<polygon points="${opoly}" fill="${oc[op.type]||'#fff'}" fill-opacity="0.55" stroke="${oc[op.type]||'#fff'}" stroke-width="1.4"/>`;
+    });
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${g}</svg>`;
+}
+
 function planDXFpreview(wallsL){
   const W=320,H=240,pad=30;
   const allX=[],allY=[];
@@ -1647,6 +1829,19 @@ $('#dxfBtn').onclick=()=>{
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
   toast('DXF αποθηκεύτηκε');
+};
+
+$('#dxf3dBtn').onclick=()=>{
+  if(!result || result.type!=='plan') return;
+  const dxf=buildPlan3DDXF(result.walls, result.height);
+  const blob=new Blob([dxf],{type:'application/dxf'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const stamp=new Date().toISOString().slice(0,16).replace(/[:T]/g,'');
+  a.href=url; a.download='model3d_'+stamp+'.dxf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+  toast('DXF 3D αποθηκεύτηκε');
 };
 
 $('#copyBtn').onclick=()=>{
