@@ -8,7 +8,9 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Hexis-Room Planner</title>
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Hexis-Room%20Planner%22%2C%22short_name%22%3A%22RoomPlanner%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230A1730%22%2C%22theme_color%22%3A%22%230A1730%22%7D">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <style>
   :root{
     --bg:#0A1730; --panel:#102348; --line:#22386b;
@@ -151,7 +153,6 @@
     <button id="startBtn" disabled>Έλεγχος συσκευής…</button>
     <div id="unsupported"></div>
     <div id="dbg" style="margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.5;word-break:break-word"></div>
-    <button id="reloadBtn" style="margin-top:16px;background:transparent;border:1px solid var(--line)!important;color:var(--muted);font-size:12px;padding:9px 14px;width:100%">🔄 Καθαρισμός & επαναφόρτωση</button>
     <div id="verLine" style="margin-top:10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.7"></div>
   </section>
 
@@ -237,6 +238,7 @@
       </div>
 
       <button id="calibBtn" style="width:100%;margin:8px 0 0;background:rgba(233,168,38,.12);border:1px solid #e9a826!important;color:#e9a826;font-size:13px;padding:10px">⚙ Βαθμονόμηση ακρίβειας</button>
+      <button id="reloadBtn" style="width:100%;margin:6px 0 0;background:transparent;border:1px solid var(--line)!important;color:var(--muted);font-size:12px;padding:8px">🔄 Καθαρισμός & επαναφόρτωση</button>
       <div class="actions">
         <button class="iconbtn" id="undoBtn">↶</button>
         <button id="tapBtn">＋ Σημείο</button>
@@ -282,7 +284,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v2.2 · fluo walls',
+  version:   'v2.3 · app icon+reload',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
