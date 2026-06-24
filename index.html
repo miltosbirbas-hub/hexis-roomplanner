@@ -159,6 +159,7 @@
     <div id="unsupported"></div>
     <div id="dbg" style="margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.5;word-break:break-word"></div>
     <div id="verLine" style="margin-top:10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.7"></div>
+    <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--muted);opacity:.85;letter-spacing:.08em">by <b style="color:var(--accent)">BRB Development</b></div>
   </section>
 
   <!-- AR OVERLAY (DOM overlay shown over camera) -->
@@ -232,7 +233,10 @@
             <option value="0.50">50 cm</option>
           </select>
         </div>
-        <button id="orthoBtn" style="background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">⊾ Καθετότητα: ΟΝ</button>
+        <div style="display:flex;gap:6px">
+          <button id="orthoBtn" style="flex:1;background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">⊾ Καθετότητα: ΟΝ</button>
+          <button id="autoLockBtn" style="flex:1;background:rgba(61,220,151,.14);border:1px solid var(--accent2)!important;color:var(--accent2);font-size:12px;padding:8px;border-radius:8px;font-weight:600">🔒 Auto-lock: ΟΝ</button>
+        </div>
         <div id="planStep" style="color:var(--accent2);font-size:12px;text-align:center;font-weight:600">Σημάδεψε την 1η γωνία τοίχου</div>
         <div style="display:flex;gap:6px">
           <button class="planOpen" data-open="door" style="flex:1;background:var(--panel);border:1px solid var(--line)!important;color:var(--ink);font-size:11px;padding:8px 4px;border-radius:8px">🚪 Πόρτα</button>
@@ -289,7 +293,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v3.0 · engineer tools',
+  version:   'v3.2 · auto-lock',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -449,6 +453,19 @@ if(orthoBtn){
   };
 }
 
+const autoLockBtn=document.getElementById('autoLockBtn');
+if(autoLockBtn){
+  autoLockBtn.onclick=()=>{
+    autoLockOn=!autoLockOn;
+    autoLockBtn.textContent = autoLockOn?'🔒 Auto-lock: ΟΝ':'🔓 Auto-lock: OFF';
+    autoLockBtn.style.background = autoLockOn?'rgba(61,220,151,.14)':'rgba(143,164,196,.12)';
+    autoLockBtn.style.borderColor = autoLockOn?'var(--accent2)':'var(--line)';
+    autoLockBtn.style.color = autoLockOn?'var(--accent2)':'var(--muted)';
+    if(!autoLockOn){ autoLocked=false; autoLockT0=0; }
+    toast(autoLockOn?'Auto-lock ενεργό — κρατά σταθερά & κλειδώνει':'Auto-lock ανενεργό');
+  };
+}
+
 function resetPlan(){
   walls=[]; planPts=[]; pendingOpen=null; openPts=[];
   planObjs.forEach(o=>scene&&scene.remove(o)); planObjs=[];
@@ -482,6 +499,10 @@ let touchNDC={x:0,y:0};         // θέση δαχτύλου σε normalized dev
 let floorY=null;                // ύψος επιπέδου πατώματος (από hit-test)
 let floorReady=false;           // βρέθηκε το πάτωμα τουλάχιστον μία φορά;
 let frozenPos=null;             // παγωμένη 3D θέση δείκτη αφού σηκωθεί το δάχτυλο
+let autoLockT0=0;               // πότε άρχισε να είναι σταθερό το σημείο (για auto-lock)
+let autoLocked=false;           // κλειδώθηκε αυτόματα το σημείο;
+const AUTOLOCK_MS=500;          // ms σταθερότητας πριν κλειδώσει αυτόματα
+let autoLockOn=true;            // διακόπτης auto-lock
 let frozenScreen=null;          // παγωμένη θέση cursor στην οθόνη (left/top)
 let raycaster=null;
 let calibPts=[];                // σημεία βαθμονόμησης
@@ -594,7 +615,9 @@ function setupTouch(){
     if(onCtl(tgt)) return;
     if(overlayEl.style.display==='none') return; // only while AR overlay active
     const t=e.touches?e.touches[0]:e;
-    touchActive=true; frozenPos=null; frozenScreen=null; upd(t.clientX,t.clientY);
+    touchActive=true; frozenPos=null; frozenScreen=null;
+    autoLocked=false; autoLockT0=0;
+    upd(t.clientX,t.clientY);
     e.preventDefault();
   };
   const move=e=>{
@@ -739,8 +762,42 @@ function onFrame(t,frame){
     colorCursor(c);
     if(cursorEl) cursorEl.style.opacity='1';
 
+    // ===== AUTO-LOCK: while dragging, if the point holds steady for AUTOLOCK_MS,
+    // snap it to the MEDIAN of recent positions and freeze (image can move after,
+    // the point stays anchored in the real world). This is the "tracking + average"
+    // behaviour — the corner stops running once it's stable. =====
+    if(autoLockOn && touchActive && mode!=='height' && !collecting){
+      if(spread<STABLE_TOL && recentPoses.length>=8){
+        if(autoLockT0===0) autoLockT0=performance.now();
+        const held=performance.now()-autoLockT0;
+        // progress hint
+        if(!autoLocked && held<AUTOLOCK_MS){
+          setStatus('Σταθεροποίηση… '+Math.round(held/AUTOLOCK_MS*100)+'%'+(usedTransient?' ◆':''));
+        }
+        if(!autoLocked && held>=AUTOLOCK_MS){
+          // median of the recent window → robust against jitter
+          const med=arr=>{const s=[...arr].sort((u,v)=>u-v);const m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2;};
+          const mx=med(recentPoses.map(p=>p.x)), my=med(recentPoses.map(p=>p.y)), mz=med(recentPoses.map(p=>p.z));
+          frozenPos=new THREE.Vector3(mx,my,mz);
+          frozenScreen={left:cursorEl.style.left, top:cursorEl.style.top};
+          autoLocked=true;
+          lastPickQuality=spread;
+          vibrate();
+          setStatus('🔒 Κλειδώθηκε — πάτα «Σημείο» (ή σύρε ξανά)');
+        }
+      }else{
+        // moved too much → reset the stability timer
+        autoLockT0=0;
+        if(autoLocked){ autoLocked=false; frozenPos=null; frozenScreen=null; }
+      }
+    }
+
     // cursor on-screen placement:
-    if(touchActive){
+    if(autoLocked && frozenScreen){
+      // auto-locked while still touching → hold position, ignore further jitter
+      cursorEl.style.left=frozenScreen.left;
+      cursorEl.style.top =frozenScreen.top;
+    }else if(touchActive){
       // following the finger — moveCursor already set left/top in upd(); nothing to do
     }else if(frozenPos && frozenScreen){
       // FROZEN: keep the cursor exactly where it was placed — no drift
@@ -845,9 +902,10 @@ async function addPoint(){
   if(calibMode){ onCalibPick(p); frozenPos=null; return; }
 
   if(mode==='plan'){
-    lastPickQuality=poseSpread();   // tracking spread at the moment of this pick
+    if(!autoLocked) lastPickQuality=poseSpread();   // (auto-lock already set it)
     handlePlanPick(p);
     frozenPos=p.clone();
+    autoLocked=false; autoLockT0=0;
     vibrate();
     return;
   }
