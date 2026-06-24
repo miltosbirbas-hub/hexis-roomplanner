@@ -312,7 +312,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v4.0 · 3D model',
+  version:   'v4.1 · 3D preview fix',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -1718,7 +1718,7 @@ function plan3Dpreview(wallsL, height){
       g+=`<polygon points="${opoly}" fill="${oc[op.type]||'#fff'}" fill-opacity="0.55" stroke="${oc[op.type]||'#fff'}" stroke-width="1.4"/>`;
     });
   });
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${g}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;aspect-ratio:${W}/${H}">${g}</svg>`;
 }
 
 function planDXFpreview(wallsL){
@@ -1742,7 +1742,7 @@ function planDXFpreview(wallsL){
       g+=`<line x1="${tx(op.x0).toFixed(1)}" y1="${ty(op.y0).toFixed(1)}" x2="${tx(op.x1).toFixed(1)}" y2="${ty(op.y1).toFixed(1)}" stroke="${oc[op.type]||'#fff'}" stroke-width="${(sw+2).toFixed(1)}" stroke-linecap="butt"/>`;
     });
   });
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${g}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;aspect-ratio:${W}/${H}">${g}</svg>`;
 }
 
 // ---------- 2D plan preview (SVG) ----------
@@ -1763,7 +1763,7 @@ function planSVG(plan,segs){
     labels+=`<text x="${mx.toFixed(1)}" y="${my.toFixed(1)}" fill="#E8772E" font-size="11" font-family="monospace" text-anchor="middle" dy="-3">${segs[i].toFixed(2)}</text>`;
   }
   const dots=plan.map(p=>`<circle cx="${tx(p.x).toFixed(1)}" cy="${ty(p.y).toFixed(1)}" r="3.5" fill="#3ddc97"/>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;aspect-ratio:${W}/${H}">
     <polygon points="${pp}" fill="rgba(232,119,46,.14)" stroke="#E8772E" stroke-width="1.6"/>
     ${dots}${labels}
   </svg>`;
