@@ -289,7 +289,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v2.4 · start logo',
+  version:   'v3.0 · engineer tools',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -351,6 +351,7 @@ let mode='plan';
 let walls=[];              // committed walls
 let orthoOn=true;          // καθετότητα τοίχων (snap στις 90°)
 const ORTHO_TOL=5;         // ±μοίρες για ενεργοποίηση snap/μηνύματος
+let lastPickQuality=0;     // tracking spread (m) τη στιγμή της τελευταίας τοποθέτησης
 let planPts=[];            // pending corner picks for the current wall
 let pendingOpen=null;      // opening type currently being added (door|window|...)
 let openPts=[];            // the 2 picks (Vector3) for the opening being added
@@ -467,6 +468,7 @@ const SAMPLE_MS = 650;          // πόσο μαζεύει δείγματα αν
 const SAMPLE_MIN = 8;           // ελάχιστα δείγματα για αποδοχή
 const STABLE_TOL = 0.012;       // m — διασπορά κάτω από αυτό = σταθερό (πράσινο)
 let scaleFactor = 1.0;          // διόρθωση κλίμακας από βαθμονόμηση
+let calibrated = false;         // έγινε βαθμονόμηση σε γνωστή απόσταση;
 let recentPoses = [];           // κυλιόμενο παράθυρο πρόσφατων reticle θέσεων
 let calibMode = false;          // βρισκόμαστε σε λήψη βαθμονόμησης;
 let collecting = false;         // μαζεύουμε δείγματα τώρα;
@@ -843,6 +845,7 @@ async function addPoint(){
   if(calibMode){ onCalibPick(p); frozenPos=null; return; }
 
   if(mode==='plan'){
+    lastPickQuality=poseSpread();   // tracking spread at the moment of this pick
     handlePlanPick(p);
     frozenPos=p.clone();
     vibrate();
@@ -931,7 +934,7 @@ function handlePlanPick(p){
   if(planPts.length>=2){
     // make a wall from the last two corners
     const a=planPts[planPts.length-2], b=planPts[planPts.length-1];
-    walls.push({a:a.clone(), b:b.clone(), thick:wallThickness(), openings:[]});
+    walls.push({a:a.clone(), b:b.clone(), thick:wallThickness(), openings:[], quality:lastPickQuality});
     // check the angle the new wall makes with the previous one and warn if odd
     if(walls.length>=2){
       const ang=wallAngleDeg(walls[walls.length-2], walls[walls.length-1]);
@@ -1139,6 +1142,7 @@ function finishCalib(measured, ans){
     return;
   }
   scaleFactor = real/measured;
+  calibrated = true;
   const pct=((scaleFactor-1)*100);
   $('#scaleBadge').style.display='block';
   $('#scaleBadge').textContent='scale ×'+scaleFactor.toFixed(4)+' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)';
@@ -1212,7 +1216,13 @@ function finish(){
   if(mode==='height') return; // handled separately
   if(mode==='plan'){
     if(walls.length<1){ toast('Φτιάξε τουλάχιστον έναν τοίχο'); return; }
-    result={type:'plan', walls:planToLocal(), wallCount:walls.length};
+    if(!calibrated){
+      const go=confirm('⚠ Δεν έχει γίνει ΒΑΘΜΟΝΟΜΗΣΗ.\n\nΧωρίς βαθμονόμηση σε γνωστή απόσταση, τα μήκη μπορεί να έχουν σφάλμα κλίμακας.\n\nΘες να συνεχίσεις χωρίς βαθμονόμηση;\n\n(OK = συνέχεια · Άκυρο = πήγαινε να βαθμονομήσεις)');
+      if(!go) return;
+    }
+    const wl=planToLocal();
+    const clo=closureError(wl);
+    result={type:'plan', walls:wl, wallCount:walls.length, closure:clo, calibrated};
     showSheet();
     return;
   }
@@ -1249,6 +1259,56 @@ function finishHeight(h){
   showSheet();
 }
 
+// Closure error: how far the end of the last wall is from the start of the first.
+// Returns {gap (m), perimeter (m), pct} — small gap vs perimeter ⇒ the sketch "closes".
+function closureError(wl){
+  if(!wl || wl.length<2) return null;
+  const start=wl[0].a;
+  const end=wl[wl.length-1].b;
+  const gap=Math.hypot(end.x-start.x, end.y-start.y);
+  let perim=0; wl.forEach(w=>perim+=w.length);
+  return { gap, perimeter:perim, pct: perim>0? (gap/perim*100):0 };
+}
+
+// Manual correction: set a wall's TRUE length (from a tape measure). Keeps the
+// wall's direction & start point; rescales it, and shifts every subsequent wall
+// by the same delta so the chain stays connected. Recomputes closure.
+function editWallLength(idx){
+  if(!result || result.type!=='plan' || !result.walls[idx]) return;
+  const w=result.walls[idx];
+  const cur=w.length.toFixed(2);
+  const ans=prompt('Τοίχος '+(idx+1)+'\nΜετρημένο μήκος AR: '+cur+' m\n\nΓράψε το ΠΡΑΓΜΑΤΙΚΟ μήκος (μέτρο/ταινία) σε m:', cur);
+  if(ans==null) return;
+  const real=parseFloat(String(ans).replace(',','.'));
+  if(!isFinite(real)||real<=0){ toast('Μη έγκυρη τιμή'); return; }
+  const oldLen=w.length||1e-6;
+  const ux=(w.b.x-w.a.x)/oldLen, uy=(w.b.y-w.a.y)/oldLen;
+  const nbx=w.a.x+ux*real, nby=w.a.y+uy*real;
+  const dx=nbx-w.b.x, dy=nby-w.b.y;
+  w.b.x=nbx; w.b.y=nby;
+  rescaleOpenings(w, w.a, ux, uy, oldLen, real);
+  w.length=real;
+  for(let i=idx+1;i<result.walls.length;i++){
+    const ww=result.walls[i];
+    ww.a.x+=dx; ww.a.y+=dy; ww.b.x+=dx; ww.b.y+=dy;
+    ww.openings.forEach(o=>{ o.x0+=dx;o.y0+=dy;o.x1+=dx;o.y1+=dy; });
+  }
+  result.closure=closureError(result.walls);
+  showSheet();
+  toast('Τοίχος '+(idx+1)+' → '+real.toFixed(2)+' m');
+}
+function rescaleOpenings(w, a, ux, uy, oldLen, newLen){
+  w.openings.forEach(o=>{
+    const d0=(o.x0-a.x)*ux+(o.y0-a.y)*uy;
+    const d1=(o.x1-a.x)*ux+(o.y1-a.y)*uy;
+    const s=newLen/(oldLen||1);
+    const nd0=d0*s, nd1=d1*s;
+    o.x0=a.x+ux*nd0; o.y0=a.y+uy*nd0;
+    o.x1=a.x+ux*nd1; o.y1=a.y+uy*nd1;
+    o.width=Math.abs(nd1-nd0);
+  });
+}
+
 // Convert AR walls to a clean local 2D system (metres), origin = first wall start.
 function planToLocal(){
   if(!walls.length) return [];
@@ -1258,7 +1318,7 @@ function planToLocal(){
     const a=conv(w.a), b=conv(w.b);
     const len=Math.hypot(b.x-a.x,b.y-a.y);
     return {
-      a, b, thick:w.thick, length:len,
+      a, b, thick:w.thick, length:len, quality:w.quality||0,
       openings:w.openings.map(op=>({
         type:op.type,
         // opening endpoints in local coords (interpolate along the wall)
@@ -1359,17 +1419,41 @@ function showSheet(){
     $('#sheetTitle').textContent='Κάτοψη';
     let totLen=0, nOpen=0;
     result.walls.forEach(w=>{ totLen+=w.length; nOpen+=w.openings.length; });
-    m.innerHTML = row('Τοίχοι',result.wallCount,'')
+    let metrics = row('Τοίχοι',result.wallCount,'')
       + row('Συν. μήκος',totLen.toFixed(2),' m')
       + row('Ανοίγματα',nOpen,'');
-    seg.innerHTML='<div style="font-size:12px;color:var(--muted);margin:14px 0 4px;letter-spacing:.1em;text-transform:uppercase">Τοίχοι</div>'
+    // calibration status
+    metrics += `<div class="metric"><span class="k">Βαθμονόμηση</span>
+      <span class="v" style="color:${result.calibrated?'var(--accent2)':'#e9a826'}">${result.calibrated?'✓':'—'}<small>${result.calibrated?(' ×'+scaleFactor.toFixed(3)):' χωρίς (πρόχειρο)'}</small></span></div>`;
+    // closure check — does the sketch "close"?
+    if(result.closure){
+      const c=result.closure;
+      const ok = c.gap<=0.05 || c.pct<=1.0;   // ≤5cm ή ≤1% περιμέτρου
+      const col = ok?'var(--accent2)':(c.pct<=3?'#e9a826':'#ff5252');
+      const lbl = ok?'δένει ✓':(c.pct<=3?'οριακό':'ΔΕΝ δένει');
+      metrics += `<div class="metric"><span class="k">Σφάλμα κλεισίματος</span>
+        <span class="v" style="color:${col}">${(c.gap*100).toFixed(1)}<small> cm · ${c.pct.toFixed(1)}% · ${lbl}</small></span></div>`;
+    }
+    m.innerHTML=metrics;
+    seg.innerHTML='<div style="font-size:12px;color:var(--muted);margin:14px 0 4px;letter-spacing:.1em;text-transform:uppercase">Τοίχοι — πάτα μήκος για διόρθωση</div>'
       + result.walls.map((w,i)=>{
           const op=w.openings.length? ' · '+w.openings.map(o=>({door:'πόρτα',window:'παρ.',balcony:'μπαλκ.',gap:'κενό'}[o.type])).join(', ') : '';
-          return `<div class="seg"><span>Τοίχος ${i+1}${op}</span><b>${w.length.toFixed(2)} m</b></div>`;
+          // reliability dot from tracking spread at pick time
+          const q=w.quality||0;
+          const qc = q<STABLE_TOL?'#3ddc97' : q<STABLE_TOL*2.5?'#e9a826':'#ff5252';
+          const qt = q<STABLE_TOL?'καλό tracking' : q<STABLE_TOL*2.5?'οριακό':'κακό — ξαναπάρε';
+          return `<div class="seg"><span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${qc};margin-right:6px" title="${qt}"></span>Τοίχος ${i+1}${op}</span>
+            <b class="wall-edit" data-wall="${i}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px">${w.length.toFixed(2)} m ✎</b></div>`;
         }).join('');
     $('#planBox').innerHTML=planDXFpreview(result.walls);
     $('#planWrap').style.display='block';
     $('#dxfBtn').style.display='block';
+    // bind per-wall manual length correction
+    setTimeout(()=>{
+      document.querySelectorAll('.wall-edit').forEach(b=>{
+        b.onclick=()=>editWallLength(parseInt(b.dataset.wall,10));
+      });
+    },0);
   }
   else if(result.type==='area'){
     $('#sheetTitle').textContent='Δωμάτιο';
