@@ -321,7 +321,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v4.3 · close-loop+floor-fix',
+  version:   'v4.4 · rotatable 3D',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -1761,9 +1761,47 @@ let planViewMode='2d';
 function renderPlanView(){
   if(!result||result.type!=='plan') return;
   const box=$('#planBox'); if(!box) return;
-  box.innerHTML = planViewMode==='3d'
-    ? plan3Dpreview(result.walls, result.height)
-    : planDXFpreview(result.walls);
+  if(planViewMode==='3d'){
+    box.innerHTML = plan3Dpreview(result.walls, result.height);
+    init3DRotateOnce();
+  }else{
+    box.innerHTML = planDXFpreview(result.walls);
+  }
+}
+// re-draw only the 3D svg content (during drag). Does NOT re-bind window handlers.
+function redraw3D(){
+  const box=$('#planBox'); if(!box||planViewMode!=='3d'||!result) return;
+  box.innerHTML = plan3Dpreview(result.walls, result.height);
+}
+// rotation state + one-time global handlers (avoids listener leak on redraw)
+let _3dDrag={on:false, lx:0, ly:0, bound:false};
+function init3DRotateOnce(){
+  if(_3dDrag.bound) return;   // window handlers attached only once for the app
+  _3dDrag.bound=true;
+  const getSvg=()=>document.getElementById('svg3d');
+  const startAt=(x,y)=>{ if(!getSvg())return; _3dDrag.on=true; _3dDrag.lx=x; _3dDrag.ly=y; const s=getSvg(); if(s)s.style.cursor='grabbing'; };
+  const moveTo=(x,y)=>{
+    if(!_3dDrag.on) return;
+    const dx=x-_3dDrag.lx, dy=y-_3dDrag.ly; _3dDrag.lx=x; _3dDrag.ly=y;
+    rot3D.yaw += dx*0.012;
+    rot3D.pitch += dy*0.012;
+    rot3D.pitch = Math.max(-0.2, Math.min(1.5, rot3D.pitch));
+    redraw3D();
+  };
+  const endDrag=()=>{ _3dDrag.on=false; const s=getSvg(); if(s)s.style.cursor='grab'; };
+  // pointer (works for mouse + most touch)
+  window.addEventListener('pointerdown', e=>{
+    const s=getSvg(); if(s && (e.target===s || s.contains(e.target))){ startAt(e.clientX,e.clientY); e.preventDefault(); }
+  });
+  window.addEventListener('pointermove', e=>moveTo(e.clientX,e.clientY));
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+  // touch fallback for browsers without pointer events on SVG
+  window.addEventListener('touchstart', e=>{
+    const s=getSvg(); if(s && e.target && (e.target===s || s.contains(e.target))){ const t=e.touches[0]; startAt(t.clientX,t.clientY); e.preventDefault(); }
+  }, {passive:false});
+  window.addEventListener('touchmove', e=>{ if(_3dDrag.on){ const t=e.touches[0]; moveTo(t.clientX,t.clientY); e.preventDefault(); } }, {passive:false});
+  window.addEventListener('touchend', endDrag);
 }
 function setViewBtns(){
   const v2=$('#view2d'), v3=$('#view3d');
@@ -1772,21 +1810,32 @@ function setViewBtns(){
   const off=(b)=>{ b.style.background='var(--panel)'; b.style.color='var(--muted)'; b.style.border='1px solid var(--line)'; b.style.fontWeight='400'; };
   if(planViewMode==='3d'){ on(v3); off(v2); } else { on(v2); off(v3); }
 }
+let rot3D={yaw:-0.6, pitch:0.5};   // γωνίες περιστροφής 3D (rad), αλλάζουν με drag
 function plan3Dpreview(wallsL, height){
-  const W=340,H=280,pad=24;
+  const W=340,H=300,pad=24;
   const Hh=height||2.80;
-  // isometric projection: world (x,y,z) where y=plan-Y (depth), z=up
-  // iso: screenX = (x - y)*cos30 ; screenY = (x + y)*sin30 - z
-  const cos=Math.cos(Math.PI/6), sin=Math.sin(Math.PI/6);
-  const iso=(x,y,z)=>({X:(x-y)*cos, Y:(x+y)*sin - z});
-  // collect all projected points to fit the view
+  if(!wallsL || !wallsL.length) return '<div style="color:var(--muted);text-align:center;padding:20px">—</div>';
+  // centre the model so it rotates around its middle
+  let cx=0,cy=0,n=0;
+  wallsL.forEach(w=>{ cx+=w.a.x+w.b.x; cy+=w.a.y+w.b.y; n+=2; });
+  cx/=n; cy/=n;
+  const cz=Hh/2;
+  // full 3D rotation: yaw around vertical (z), pitch around horizontal
+  const cy_=Math.cos(rot3D.yaw), sy=Math.sin(rot3D.yaw);
+  const cp=Math.cos(rot3D.pitch), sp=Math.sin(rot3D.pitch);
+  const proj=(x,y,z)=>{
+    // translate to centre
+    let X=x-cx, Y=y-cy, Z=z-cz;
+    // yaw (around Z/up)
+    let X1=X*cy_ - Y*sy, Y1=X*sy + Y*cy_, Z1=Z;
+    // pitch (around X)
+    let X2=X1, Y2=Y1*cp - Z1*sp, Z2=Y1*sp + Z1*cp;
+    // orthographic: screen X = X2, screen Y = -(Z2) (up is up); Y2 is depth
+    return {X:X2, Y:-Z2, depth:Y2};
+  };
+  // gather projected points to fit
   const pts=[];
-  wallsL.forEach(w=>{
-    [[w.a.x,w.a.y],[w.b.x,w.b.y]].forEach(([x,y])=>{
-      pts.push(iso(x,y,0)); pts.push(iso(x,y,Hh));
-    });
-  });
-  if(!pts.length) return '<div style="color:var(--muted);text-align:center;padding:20px">—</div>';
+  wallsL.forEach(w=>{ [[w.a.x,w.a.y],[w.b.x,w.b.y]].forEach(([x,y])=>{ pts.push(proj(x,y,0)); pts.push(proj(x,y,Hh)); }); });
   const minX=Math.min(...pts.map(p=>p.X)),maxX=Math.max(...pts.map(p=>p.X));
   const minY=Math.min(...pts.map(p=>p.Y)),maxY=Math.max(...pts.map(p=>p.Y));
   const sw=(maxX-minX)||1, sh=(maxY-minY)||1;
@@ -1794,28 +1843,38 @@ function plan3Dpreview(wallsL, height){
   const TX=p=>pad+(p.X-minX)*sc;
   const TY=p=>pad+(p.Y-minY)*sc;
   const oc={door:'#E8772E',window:'#49b6ff',balcony:'#ffd24a',gap:'#ff4d4d'};
-  // draw walls back-to-front (painter's): sort by midpoint depth (x+y)
-  const order=wallsL.map((w,i)=>({i,d:(w.a.x+w.a.y+w.b.x+w.b.y)})).sort((a,b)=>a.d-b.d);
-  let g='';
-  order.forEach(({i})=>{
-    const w=wallsL[i];
-    // wall quad (a-bottom, b-bottom, b-top, a-top)
-    const ab=iso(w.a.x,w.a.y,0), bb=iso(w.b.x,w.b.y,0),
-          bt=iso(w.b.x,w.b.y,Hh), at=iso(w.a.x,w.a.y,Hh);
-    const poly=[ab,bb,bt,at].map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
-    g+=`<polygon points="${poly}" fill="rgba(57,255,20,0.13)" stroke="#39FF14" stroke-width="1.6" stroke-linejoin="round"/>`;
-    // openings as colored panels at sill..lintel
+  // build faces with average depth for painter's sort
+  const faces=[];
+  wallsL.forEach(w=>{
+    const ab=proj(w.a.x,w.a.y,0), bb=proj(w.b.x,w.b.y,0),
+          bt=proj(w.b.x,w.b.y,Hh), at=proj(w.a.x,w.a.y,Hh);
+    const d=(ab.depth+bb.depth+bt.depth+at.depth)/4;
+    faces.push({pts:[ab,bb,bt,at], d, fill:'rgba(57,255,20,0.13)', stroke:'#39FF14', sw:1.6});
     (w.openings||[]).forEach(op=>{
       const sill=op.openSill!=null?op.openSill:0;
-      const lin = op.lintel!=null?op.lintel:(sill+(op.openH||2.1));
-      // opening spans from its x0,y0 to x1,y1 along the wall
-      const o0b=iso(op.x0,op.y0,sill), o1b=iso(op.x1,op.y1,sill),
-            o1t=iso(op.x1,op.y1,lin),  o0t=iso(op.x0,op.y0,lin);
-      const opoly=[o0b,o1b,o1t,o0t].map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
-      g+=`<polygon points="${opoly}" fill="${oc[op.type]||'#fff'}" fill-opacity="0.55" stroke="${oc[op.type]||'#fff'}" stroke-width="1.4"/>`;
+      const lin=op.lintel!=null?op.lintel:(sill+(op.openH||2.1));
+      const o0b=proj(op.x0,op.y0,sill),o1b=proj(op.x1,op.y1,sill),
+            o1t=proj(op.x1,op.y1,lin), o0t=proj(op.x0,op.y0,lin);
+      const dd=(o0b.depth+o1b.depth+o1t.depth+o0t.depth)/4;
+      const c=oc[op.type]||'#fff';
+      faces.push({pts:[o0b,o1b,o1t,o0t], d:dd-0.01, fill:c, fillOp:0.6, stroke:c, sw:1.4});
     });
   });
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;aspect-ratio:${W}/${H}">${g}</svg>`;
+  // floor outline
+  const floorPts=wallsL.map(w=>proj(w.a.x,w.a.y,0));
+  faces.sort((a,b)=>b.d-a.d);   // far first
+  let g='';
+  // ground polygon (subtle)
+  if(floorPts.length>2){
+    const fp=floorPts.map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
+    g+=`<polygon points="${fp}" fill="rgba(143,164,196,0.08)" stroke="rgba(143,164,196,0.3)" stroke-width="1"/>`;
+  }
+  faces.forEach(f=>{
+    const poly=f.pts.map(p=>`${TX(p).toFixed(1)},${TY(p).toFixed(1)}`).join(' ');
+    g+=`<polygon points="${poly}" fill="${f.fill}" ${f.fillOp?`fill-opacity="${f.fillOp}"`:''} stroke="${f.stroke}" stroke-width="${f.sw}" stroke-linejoin="round"/>`;
+  });
+  // the SVG gets an id so touch handlers can find & re-render it
+  return `<svg id="svg3d" viewBox="0 0 ${W} ${H}" width="100%" style="display:block;height:auto;aspect-ratio:${W}/${H};touch-action:none;cursor:grab">${g}</svg>`;
 }
 
 function planDXFpreview(wallsL){
