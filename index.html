@@ -251,9 +251,15 @@
         </div>
         <div id="planStep" style="color:var(--accent2);font-size:12px;text-align:center;font-weight:600">Σημάδεψε την 1η γωνία τοίχου</div>
 
-        <!-- PHASE A: walls done → go to openings -->
-        <button id="closeLoopBtn" style="width:100%;background:rgba(73,182,255,.14);border:1px solid #49b6ff!important;color:#49b6ff;font-size:13px;padding:10px;border-radius:8px;font-weight:600">⭯ Κλείσιμο στο 1ο σημείο</button>
-        <button id="wallsDoneBtn" style="width:100%;background:var(--accent);color:#1a1206;border:none;font-size:13px;padding:10px;border-radius:8px;font-weight:700">Τέλος τοίχων → Ανοίγματα</button>
+        <!-- PHASE A: wall-phase tools (hidden in openings phase) -->
+        <div id="wallPhaseTools" style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;gap:6px">
+            <button id="sideBtn" style="flex:1;background:var(--panel);border:1px solid var(--line)!important;color:var(--ink);font-size:11px;padding:7px;border-radius:8px">Σημείο: Παρειά (έσω)</button>
+            <button id="dirBtn" style="flex:1;background:var(--panel);border:1px solid var(--line)!important;color:var(--ink);font-size:11px;padding:7px;border-radius:8px">Φορά: ↺ CCW</button>
+          </div>
+          <button id="closeLoopBtn" style="width:100%;background:rgba(73,182,255,.14);border:1px solid #49b6ff!important;color:#49b6ff;font-size:13px;padding:10px;border-radius:8px;font-weight:600">⭯ Κλείσιμο στο 1ο σημείο</button>
+          <button id="wallsDoneBtn" style="width:100%;background:var(--accent);color:#1a1206;border:none;font-size:13px;padding:10px;border-radius:8px;font-weight:700">Τέλος τοίχων → Ανοίγματα</button>
+        </div>
 
         <!-- PHASE B: opening type buttons (hidden until walls are done) -->
         <div id="openTools" style="display:none;flex-direction:column;gap:6px">
@@ -321,7 +327,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v4.4 · rotatable 3D',
+  version:   'v4.5 · wall face pick',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -384,6 +390,8 @@ let walls=[];              // committed walls
 let orthoOn=true;          // καθετότητα τοίχων (snap στις 90°)
 const ORTHO_TOL=5;         // ±μοίρες για ενεργοποίηση snap/μηνύματος
 let lastPickQuality=0;     // tracking spread (m) τη στιγμή της τελευταίας τοποθέτησης
+let wallSide='inner';      // πού είναι το σημείο: 'inner' (παρειά, παχαίνει έξω) | 'center' | 'outer'
+let drawCCW=true;          // φορά σχεδίασης: αριστερόστροφα ⇒ «μέσα» = αριστερά της πορείας
 let wallHeight=2.80;       // κοινό ύψος τοίχων (m) — ζητείται μία φορά
 let wallHeightAsked=false; // ρωτήθηκε το ύψος;
 let planPts=[];            // pending corner picks for the current wall
@@ -501,22 +509,39 @@ if(autoLockBtn){
 function setPlanPhase(phase){
   planPhase=phase;
   pendingOpen=null; openPts=[];
-  const openTools=$('#openTools'), wallsDone=$('#wallsDoneBtn'), closeBtn=$('#closeLoopBtn');
+  const openTools=$('#openTools'), wallTools=$('#wallPhaseTools');
   if(phase==='openings'){
     if(openTools) openTools.style.display='flex';
-    if(wallsDone) wallsDone.style.display='none';
-    if(closeBtn) closeBtn.style.display='none';
+    if(wallTools) wallTools.style.display='none';
     setPlanStep('Διάλεξε τύπο ανοίγματος & σημάδεψε πάνω στον τοίχο');
   }else{
     if(openTools) openTools.style.display='none';
-    if(wallsDone) wallsDone.style.display='block';
-    if(closeBtn) closeBtn.style.display='block';
+    if(wallTools) wallTools.style.display='flex';
     setPlanStep(walls.length?('Τοίχος '+walls.length+' ✓ · συνέχισε ή «Τέλος τοίχων»'):'Σημάδεψε την 1η γωνία τοίχου');
   }
 }
 const closeLoopBtn=document.getElementById('closeLoopBtn');
 if(closeLoopBtn){
   closeLoopBtn.onclick=()=>closeLoop();
+}
+const sideBtn=document.getElementById('sideBtn');
+if(sideBtn){
+  sideBtn.onclick=()=>{
+    wallSide = wallSide==='inner'?'center':(wallSide==='center'?'outer':'inner');
+    const lbl={inner:'Παρειά (έσω)',center:'Άξονας',outer:'Παρειά (έξω)'}[wallSide];
+    sideBtn.textContent='Σημείο: '+lbl;
+    redrawPlan();
+    toast('Σημείο τοίχου: '+lbl);
+  };
+}
+const dirBtn=document.getElementById('dirBtn');
+if(dirBtn){
+  dirBtn.onclick=()=>{
+    drawCCW=!drawCCW;
+    dirBtn.textContent='Φορά: '+(drawCCW?'↺ CCW':'↻ CW');
+    redrawPlan();
+    toast('Φορά «μέσα»: '+(drawCCW?'αριστερά πορείας':'δεξιά πορείας'));
+  };
 }
 const wallsDoneBtn=document.getElementById('wallsDoneBtn');
 if(wallsDoneBtn){
@@ -1241,24 +1266,38 @@ function redrawPlan(){
   const y = walls.length? walls[0].a.y+0.002 : 0;
   walls.forEach(w=>{
     const col = 0x39FF14;   // fluo green walls
-    // wall centre line
-    addPlanLine(w.a,w.b,col,2);
-    // wall thickness: offset edges
     const dir=new THREE.Vector3().subVectors(w.b,w.a); dir.y=0; dir.normalize();
-    const nrm=new THREE.Vector3(-dir.z,0,dir.x).multiplyScalar(w.thick/2);
-    const a1=new THREE.Vector3().copy(w.a).add(nrm), b1=new THREE.Vector3().copy(w.b).add(nrm);
-    const a2=new THREE.Vector3().copy(w.a).sub(nrm), b2=new THREE.Vector3().copy(w.b).sub(nrm);
-    addPlanLine(a1,b1,col,1); addPlanLine(a2,b2,col,1);
-    // openings drawn in distinct colours along the wall
+    const nrm=new THREE.Vector3(-dir.z,0,dir.x);  // LEFT normal (unit)
+    const [o1,o2]=wallEdgeOffsets(w.thick);
+    const n1=nrm.clone().multiplyScalar(o1), n2=nrm.clone().multiplyScalar(o2);
+    // the pick edge (where your point is) drawn brighter
+    const a1=new THREE.Vector3().copy(w.a).add(n1), b1=new THREE.Vector3().copy(w.b).add(n1);
+    const a2=new THREE.Vector3().copy(w.a).add(n2), b2=new THREE.Vector3().copy(w.b).add(n2);
+    addPlanLine(a1,b1,col,2);   // pick face (your measured line)
+    addPlanLine(a2,b2,col,1);   // other face
+    // end caps
+    addPlanLine(a1,a2,col,1); addPlanLine(b1,b2,col,1);
+    // openings drawn in distinct colours along the wall (on the pick face)
     w.openings.forEach(op=>{
       const oc = op.type==='door'?0xE8772E : op.type==='window'?0x49b6ff
                : op.type==='balcony'?0xffd24a : 0xff4d4d;
-      const pa=lerpV(w.a,w.b,op.t0), pb=lerpV(w.a,w.b,op.t1);
+      const pa=lerpV(a1,b1,op.t0), pb=lerpV(a1,b1,op.t1);
       addPlanLine(pa,pb,oc,4);
     });
   });
 }
 function lerpV(a,b,t){ return new THREE.Vector3(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t); }
+
+// Given wall thickness, return the two edge offsets (multiples of the LEFT normal
+// of the a→b direction). The pick point sits at offset 0 for inner/outer.
+// nrm points LEFT of travel. "inside" = left when drawing CCW.
+function wallEdgeOffsets(thick){
+  const insideSign = drawCCW ? +1 : -1;   // +1 ⇒ inside is +nrm (left)
+  if(wallSide==='center') return [ +thick/2, -thick/2 ];
+  if(wallSide==='outer')  return [ 0, insideSign*thick ];      // point=outer face, grows inward
+  // 'inner' (default): point = inner face, wall grows OUTWARD
+  return [ 0, -insideSign*thick ];                              // grows toward outside
+}
 function addPlanLine(a,b,color,width){
   const g=new THREE.BufferGeometry().setFromPoints([a,b]);
   const l=new THREE.Line(g,new THREE.LineBasicMaterial({color}));
@@ -1576,19 +1615,25 @@ function buildPlanDXF(plan){
     const dx=w.b.x-w.a.x, dy=w.b.y-w.a.y;
     const len=Math.hypot(dx,dy)||1;
     const ux=dx/len, uy=dy/len;       // unit along wall
-    const nx=-uy, ny=ux;              // unit normal
-    const t=w.thick/2;
-    // two wall faces (thickness)
-    const f1=(s)=>({x:w.a.x+ux*0*s, y:0});
-    // face A
-    line(w.a.x+nx*t, w.a.y+ny*t, w.b.x+nx*t, w.b.y+ny*t, 'TOICHOI');
-    // face B
-    line(w.a.x-nx*t, w.a.y-ny*t, w.b.x-nx*t, w.b.y-ny*t, 'TOICHOI');
+    const nx=-uy, ny=ux;              // unit LEFT normal
+    // edge offsets per wallSide convention (note: 2D plan y is flipped from AR,
+    // so the inside sign flips too → use -drawCCW here)
+    const insideSign = drawCCW ? -1 : +1;
+    let o1, o2;
+    if(wallSide==='center'){ o1=w.thick/2; o2=-w.thick/2; }
+    else if(wallSide==='outer'){ o1=0; o2=insideSign*w.thick; }
+    else { o1=0; o2=-insideSign*w.thick; }   // inner (default)
+    const A1x=w.a.x+nx*o1, A1y=w.a.y+ny*o1, B1x=w.b.x+nx*o1, B1y=w.b.y+ny*o1;
+    const A2x=w.a.x+nx*o2, A2y=w.a.y+ny*o2, B2x=w.b.x+nx*o2, B2y=w.b.y+ny*o2;
+    // face 1 (pick face) and face 2
+    line(A1x,A1y,B1x,B1y,'TOICHOI');
+    line(A2x,A2y,B2x,B2y,'TOICHOI');
     // end caps
-    line(w.a.x+nx*t, w.a.y+ny*t, w.a.x-nx*t, w.a.y-ny*t, 'TOICHOI');
-    line(w.b.x+nx*t, w.b.y+ny*t, w.b.x-nx*t, w.b.y-ny*t, 'TOICHOI');
-    // dimension label at wall midpoint
-    text((w.a.x+w.b.x)/2, (w.a.y+w.b.y)/2 + t + 0.05, 0.12, 'DIASTASEIS', w.length.toFixed(2)+' m');
+    line(A1x,A1y,A2x,A2y,'TOICHOI');
+    line(B1x,B1y,B2x,B2y,'TOICHOI');
+    // dimension label at pick-face midpoint
+    text((A1x+B1x)/2, (A1y+B1y)/2 + 0.05, 0.12, 'DIASTASEIS', w.length.toFixed(2)+' m');
+    const t=w.thick/2; // (kept for opening symbols below)
     // openings: draw a gap marker across the wall + symbol
     w.openings.forEach(op=>{
       const lay=openLayer[op.type]||'KENA';
