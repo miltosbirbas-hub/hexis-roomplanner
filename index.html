@@ -156,10 +156,23 @@
       <div class="step"><span class="n">03</span><div>Πάτα ✓ — δες την κάτοψη και κατέβασε το <b>DXF</b>.</div></div>
     </div>
     <button id="startBtn" disabled>Έλεγχος συσκευής…</button>
+    <button id="guideBtn" style="margin-top:10px;width:100%;background:transparent;border:1px solid var(--line)!important;color:var(--muted);font-size:13px;padding:10px;border-radius:8px">📖 Οδηγίες χρήσης</button>
     <div id="unsupported"></div>
     <div id="dbg" style="margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.5;word-break:break-word"></div>
     <div id="verLine" style="margin-top:10px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.7"></div>
     <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--muted);opacity:.85;letter-spacing:.08em">by <b style="color:var(--accent)">BRB Development</b></div>
+  </section>
+
+  <!-- GUIDE MODAL -->
+  <section id="guideModal" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(6,12,28,.96);overflow-y:auto;padding:20px 18px 40px">
+    <div style="max-width:560px;margin:0 auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;position:sticky;top:-20px;background:rgba(6,12,28,.96);padding:8px 0 12px;margin-bottom:8px">
+        <b style="font-size:17px;color:var(--ink)">Οδηγίες χρήσης</b>
+        <button id="guideClose" style="background:var(--panel);border:1px solid var(--line)!important;color:var(--ink);width:38px;height:38px;border-radius:10px;font-size:18px">✕</button>
+      </div>
+      <div id="guideBody" style="color:var(--ink);font-size:14px;line-height:1.65"></div>
+      <button id="guideClose2" style="margin-top:20px;width:100%;background:var(--accent);color:#1a1206;border:none;font-size:14px;padding:12px;border-radius:10px;font-weight:700">Κατάλαβα — Κλείσιμο</button>
+    </div>
   </section>
 
   <!-- AR OVERLAY (DOM overlay shown over camera) -->
@@ -306,6 +319,7 @@
       <button id="copyBtn">Αντιγραφή report</button>
       <button id="againBtn">Νέα μέτρηση</button>
     </div>
+    <p style="text-align:center;font-size:10.5px;color:var(--muted);opacity:.7;margin-top:10px;line-height:1.5">Ενδεικτική μέτρηση από κάμερα/AR — όχι τοπογραφικό όργανο. Επαληθεύστε με πιστοποιημένο όργανο για επίσημη χρήση.</p>
   </section>
 
   <div class="toast" id="toast"></div>
@@ -327,7 +341,7 @@ window.addEventListener('unhandledrejection', e=>{
 window.APP_CONFIG = {
   name:      'Hexis-Room Planner',
   shortName: 'RoomPlanner',
-  version:   'v4.5 · wall face pick',
+  version:   'v4.6 · user guide',
   domain:    '',                 // set your domain later, e.g. 'roomplanner.gr'
   accent:    '#E8772E',          // primary (orange)
   accent2:   '#3ddc97',          // secondary (green)
@@ -425,6 +439,55 @@ let planObjs=[];           // three.js objects for the plan
 
 $('#startBtn').onclick=()=>{ if(!$('#startBtn').disabled) startAR(); };
 $('#exitBtn').onclick=()=>{ if(session) session.end(); };
+
+// ---- User guide ----
+const GUIDE_HTML = `
+<p style="color:var(--accent2);font-weight:700;margin:0 0 4px">⚙ 1. ΒΑΘΜΟΝΟΜΗΣΗ — κάν' την ΠΑΝΤΑ πρώτη</p>
+<p>Η κάμερα/AR εκτιμά αποστάσεις, αλλά μπορεί να έχει σφάλμα κλίμακας. Η βαθμονόμηση το διορθώνει:</p>
+<p>1. Πάτα <b>Έναρξη</b> και κάνε τη <b>σάρωση</b> (κούνα αργά το κινητό μέχρι να γεμίσει η μπάρα).<br>
+2. Πάτα <b>⚙ Βαθμονόμηση ακρίβειας</b>.<br>
+3. Σημάδεψε δύο σημεία που η <b>πραγματική απόσταση είναι γνωστή</b> (π.χ. πλάκα 60cm, κάσα πόρτας, μέτρο στο πάτωμα).<br>
+4. Γράψε την πραγματική τιμή. Από εκεί όλες οι μετρήσεις διορθώνονται.</p>
+<p style="color:var(--muted);font-size:13px">Χωρίς βαθμονόμηση η εφαρμογή σε προειδοποιεί και η μέτρηση θεωρείται «πρόχειρη».</p>
+
+<p style="color:var(--accent2);font-weight:700;margin:16px 0 4px">📐 2. ΚΑΤΟΨΗ (τοίχοι)</p>
+<p>1. Διάλεξε <b>πάχος</b> και <b>ύψος</b> τοίχων.<br>
+2. <b>Σύρε το δάχτυλο</b> ώστε η αιχμή του βέλους να πέσει στη γωνία. Κράτα λίγο σταθερά — όταν δει «🔒 Κλειδώθηκε» πάτα <b>＋ Σημείο</b>.<br>
+3. Συνέχισε γωνία-γωνία. Το <b>σημείο = εσωτερική παρειά</b>· ο τοίχος παχαίνει προς τα έξω (η <b>φορά</b> ορίζει το «μέσα»).<br>
+4. Για να κλείσει το περίγραμμα: πάτα <b>⭯ Κλείσιμο στο 1ο σημείο</b>, ή σημάδεψε κοντά στην 1η γωνία (κουμπώνει μόνο του).<br>
+5. Πάτα <b>✓</b> για τη σύνοψη — εκεί βλέπεις 2D/3D, σφάλμα κλεισίματος, και εξάγεις DXF.</p>
+<p style="color:var(--muted);font-size:13px">Καθετότητα (⊾): κουμπώνει αυτόματα στις 90° αν η γωνία είναι κοντά (±5°). Αν χτυπήσεις ψηλά (ντουλάπι/τοίχο), το σημείο προβάλλεται στο δάπεδο.</p>
+
+<p style="color:var(--accent2);font-weight:700;margin:16px 0 4px">🚪 3. ΚΟΥΦΩΜΑΤΑ</p>
+<p>1. Αφού τελειώσεις τους τοίχους, πάτα <b>Τέλος τοίχων → Ανοίγματα</b>.<br>
+2. Διάλεξε τύπο (Πόρτα / Παράθυρο / Μπαλκονόπορτα / Κενό).<br>
+3. Σημάδεψε <b>αρχή</b> και <b>τέλος</b> του ανοίγματος πάνω στον τοίχο.<br>
+4. Γράψε <b>πλάτος / ύψος / ποδιά</b> (το πρέκι υπολογίζεται). Το άνοιγμα κουμπώνει στον κοντινότερο τοίχο.<br>
+5. <b>← Πίσω στους τοίχους</b> σε γυρίζει πίσω χωρίς να σβήνει τίποτα.</p>
+
+<p style="color:var(--accent2);font-weight:700;margin:16px 0 4px">▭ 4. ΕΜΒΑΔΟΝ ΔΩΜΑΤΙΟΥ</p>
+<p>1. Διάλεξε <b>Εμβαδόν</b>.<br>
+2. Σημάδεψε τις γωνίες του χώρου με τη σειρά.<br>
+3. Πάτα <b>✓</b> — βλέπεις εμβαδόν, περίμετρο, και μήκη πλευρών.</p>
+
+<p style="color:var(--accent2);font-weight:700;margin:16px 0 4px">📏 5. ΑΠΟΣΤΑΣΗ 2 ΣΗΜΕΙΩΝ</p>
+<p>1. Διάλεξε <b>Απόσταση</b>.<br>
+2. Σημάδεψε 2 σημεία.<br>
+3. Πάτα <b>✓</b> — βλέπεις το μήκος.</p>
+
+<p style="color:var(--accent2);font-weight:700;margin:16px 0 4px">🎯 ΑΚΡΙΒΕΙΑ — τι να περιμένεις</p>
+<p>Καλή βαθμονόμηση + αργή σάρωση + σταθερό κλείδωμα δίνουν τα καλύτερα αποτελέσματα. Παράγοντες που μειώνουν την ακρίβεια: κακός φωτισμός, γυαλιστερές/μονόχρωμες επιφάνειες, γρήγορες κινήσεις, μεγάλες αποστάσεις (συσσώρευση σφάλματος). Η χρωματιστή κουκκίδα δίπλα σε κάθε τοίχο δείχνει την ποιότητα tracking (🟢 καλό / 🟡 οριακό / 🔴 ξαναπάρε). Μπορείς να διορθώσεις χειροκίνητα κάθε πλευρά (πάτα το μήκος με ✎) βάζοντας την τιμή από το μέτρο σου.</p>
+
+<div style="margin-top:18px;padding:14px;background:rgba(233,82,82,.10);border:1px solid #ff5252;border-radius:10px">
+<p style="color:#ff8a8a;font-weight:700;margin:0 0 6px">⚠ ΣΗΜΑΝΤΙΚΟ — Δήλωση ακριβείας</p>
+<p style="font-size:13px;margin:0;color:var(--ink)">Η εφαρμογή δίνει <b>ενδεικτικές μετρήσεις</b> από κάμερα/AR. <b>ΔΕΝ είναι τοπογραφικό όργανο</b> και δεν υποκαθιστά total station, μετροταινία ή επίσημη αποτύπωση. Τα αποτελέσματα προορίζονται για <b>σκαρίφημα και πρόχειρη εκτίμηση</b>. Για επίσημες χρήσεις (κτηματολόγιο, άδειες, συμβόλαια, κατασκευή) επαληθεύστε με πιστοποιημένο όργανο. Ο χρήστης φέρει την ευθύνη ελέγχου των τιμών πριν οποιαδήποτε χρήση.</p>
+</div>
+`;
+function openGuide(){ const m=$('#guideBody'); if(m) m.innerHTML=GUIDE_HTML; $('#guideModal').style.display='block'; }
+function closeGuide(){ $('#guideModal').style.display='none'; }
+$('#guideBtn').onclick=openGuide;
+$('#guideClose').onclick=closeGuide;
+$('#guideClose2').onclick=closeGuide;
 
 // version line + manual cache clear & reload
 (function(){
